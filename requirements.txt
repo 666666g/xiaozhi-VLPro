@@ -1,0 +1,15 @@
+applescript==2021.2.9
+comtypes==1.4.9
+cryptography==44.0.1
+numpy==2.1.0
+opuslib==3.0.1
+paho_mqtt==2.1.0
+PyAudio==0.2.14
+pycaw==20240210
+pyperclip==1.9.0
+Requests==2.32.3
+setuptools==75.8.0
+websockets==15.0
+opencv-python>=4.5.0
+pillow>=8.0.0
+requests>=2.25.0
