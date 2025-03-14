@@ -7,21 +7,27 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        ('src', 'src'),
-        ('opus.dll', '.'),
+        # 只包含实际存在的文件和目录
+        ('libs/windows/opus.dll', 'libs/windows'),
+        ('config', 'config'),  # 添加配置文件目录
+        ('models', 'models'),  # 添加模型目录
     ],
     hiddenimports=[
-        'PIL._tkinter_finder',
-        'customtkinter',
-        'paho.mqtt.client',
+        'engineio.async_drivers.threading',
         'opuslib',
-        'cryptography',
-        'pyaudio',
-        'pycaw',
-        'comtypes',
+        'pyaudiowpatch',
         'numpy',
-        'psutil',
-        'future'
+        'tkinter',
+        'queue',
+        'json',
+        'asyncio',
+        'threading',
+        'logging',
+        'ctypes',
+        'socketio',
+        'engineio',
+        'websockets',  # 添加 websockets 依赖
+        'vosk',  # 添加语音识别依赖
     ],
     hookspath=[],
     hooksconfig={},
@@ -33,7 +39,14 @@ a = Analysis(
     noarchive=False,
 )
 
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+import PyInstaller.config
+PyInstaller.config.CONF['disablewindowedtraceback'] = True
+
+pyz = PYZ(
+    a.pure,
+    a.zipped_data,
+    cipher=block_cipher
+)
 
 exe = EXE(
     pyz,
@@ -42,16 +55,15 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='云睿探知者',
+    name='小云',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,
+    console=True,
     disable_windowed_traceback=False,
-    argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,

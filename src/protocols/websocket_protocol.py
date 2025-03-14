@@ -7,8 +7,6 @@ import websockets
 from src.protocols.protocol import Protocol
 from src.utils.config_manager import ConfigManager
 
-# 获取配置管理器实例
-config = ConfigManager.get_instance()
 
 logger = logging.getLogger("WebsocketProtocol")
 
@@ -16,29 +14,36 @@ logger = logging.getLogger("WebsocketProtocol")
 class WebsocketProtocol(Protocol):
     def __init__(self):
         super().__init__()
+        # 获取配置管理器实例
+        self.config = ConfigManager.get_instance()
         self.websocket = None
         self.server_sample_rate = 16000
         self.connected = False
-        self.hello_received = asyncio.Event()
-        self.config = ConfigManager.get_instance()
-        self.WEBSOCKET_URL = config.get_config("NETWORK.WEBSOCKET_URL")
-        self.CLIENT_ID = config.get_client_id()
-        self.DEVICE_ID = config.get_device_id()
-        self.on_connection_state_changed = None
+        self.hello_received = None  # 初始化时先设为 None
+        self.WEBSOCKET_URL = self.config.get_config("NETWORK.WEBSOCKET_URL")
+        self.WEBSOCKET_ACCESS_TOKEN = self.config.get_config("NETWORK.WEBSOCKET_ACCESS_TOKEN")
+        self.CLIENT_ID = self.config.get_client_id()
+        self.DEVICE_ID = self.config.get_device_id()
 
     async def connect(self) -> bool:
         """连接到WebSocket服务器"""
         try:
+            # 在连接时创建 Event，确保在正确的事件循环中
+            self.hello_received = asyncio.Event()
+
             # 配置连接
             headers = {
-                "Authorization": f"Bearer test-token",
+                "Authorization": f"Bearer {self.WEBSOCKET_ACCESS_TOKEN}",
                 "Protocol-Version": "1",
                 "Device-Id": self.DEVICE_ID,  # 获取设备MAC地址
                 "Client-Id": self.CLIENT_ID
             }
 
             # 建立WebSocket连接
-            self.websocket = await websockets.connect(self.WEBSOCKET_URL, additional_headers=headers, proxy=None)
+            self.websocket = await websockets.connect(
+                self.WEBSOCKET_URL, 
+                extra_headers=headers # 高版本这里改为additional_headers=headers
+            )
 
             # 启动消息处理循环
             asyncio.create_task(self._message_handler())
@@ -59,76 +64,68 @@ class WebsocketProtocol(Protocol):
 
             # 等待服务器hello响应
             try:
-                await asyncio.wait_for(self.hello_received.wait(), timeout=10.0)
+                await asyncio.wait_for(
+                    self.hello_received.wait(), 
+                    timeout=10.0
+                )
                 self.connected = True
                 logger.info("已连接到WebSocket服务器")
-                if self.on_connection_state_changed:
-                    self.on_connection_state_changed(True)
                 return True
             except asyncio.TimeoutError:
                 logger.error("等待服务器hello响应超时")
                 if self.on_network_error:
                     self.on_network_error("等待响应超时")
-                self.connected = False
-                if self.on_connection_state_changed:
-                    self.on_connection_state_changed(False)
                 return False
 
         except Exception as e:
             logger.error(f"WebSocket连接失败: {e}")
             if self.on_network_error:
                 self.on_network_error(f"无法连接服务: {str(e)}")
-            self.connected = False
-            if self.on_connection_state_changed:
-                self.on_connection_state_changed(False)
             return False
 
     async def _message_handler(self):
         """处理接收到的WebSocket消息"""
         try:
             async for message in self.websocket:
-
                 if isinstance(message, str):
-
                     try:
                         data = json.loads(message)
                         msg_type = data.get("type")
                         if msg_type == "hello":
+                            # 处理服务器 hello 消息
                             await self._handle_server_hello(data)
                         else:
                             if self.on_incoming_json:
                                 self.on_incoming_json(data)
                     except json.JSONDecodeError as e:
                         logger.error(f"无效的JSON消息: {message}, 错误: {e}")
-                else:
-                    # 处理二进制音频数据
-                    if self.on_incoming_audio:
-                        self.on_incoming_audio(message)
+                elif self.on_incoming_audio:  # 使用 elif 更清晰
+                    self.on_incoming_audio(message)
 
-        except websockets.exceptions.ConnectionClosed:
+        except websockets.ConnectionClosed:
             logger.info("WebSocket连接已关闭")
             self.connected = False
             if self.on_audio_channel_closed:
+                # 使用 schedule 确保回调在主线程中执行
                 await self.on_audio_channel_closed()
-            if self.on_connection_state_changed:
-                self.on_connection_state_changed(False)
         except Exception as e:
             logger.error(f"消息处理错误: {e}")
             self.connected = False
             if self.on_network_error:
+                # 使用 schedule 确保错误处理在主线程中执行
                 self.on_network_error(f"连接错误: {str(e)}")
-            if self.on_connection_state_changed:
-                self.on_connection_state_changed(False)
 
     async def send_audio(self, data: bytes):
         """发送音频数据"""
-        if self.websocket and self.connected:
-            try:
-                await self.websocket.send(data)
-            except Exception as e:
-                logger.error(f"发送音频数据失败: {e}")
-                if self.on_network_error:
-                    self.on_network_error(f"发送音频失败: {str(e)}")
+        if not self.is_audio_channel_opened():  # 使用已有的 is_connected 方法
+            return
+
+        try:
+            await self.websocket.send(data)
+        except Exception as e:
+            logger.error(f"发送音频数据失败: {e}")
+            if self.on_network_error:
+                self.on_network_error(f"发送音频失败: {str(e)}")
 
     async def send_text(self, message: str):
         """发送文本消息"""
@@ -136,7 +133,7 @@ class WebsocketProtocol(Protocol):
             try:
                 await self.websocket.send(message)
             except Exception as e:
-                logger.error(f"发送文本消息失败: {e}")
+                await self.close_audio_channel()
                 if self.on_network_error:
                     self.on_network_error(f"发送消息失败: {str(e)}")
 
@@ -145,15 +142,23 @@ class WebsocketProtocol(Protocol):
         return self.websocket is not None and self.connected
 
     async def open_audio_channel(self) -> bool:
-        """打开音频通道"""
+        """建立 WebSocket 连接
+        
+        如果尚未连接,则创建新的 WebSocket 连接
+        Returns:
+            bool: 连接是否成功
+        """
         if not self.connected:
             return await self.connect()
         return True
 
     async def _handle_server_hello(self, data: dict):
-        """
-        处理服务器的 hello 消息
-        参考 C++ 版本的 ParseServerHello 函数实现
+        """处理服务器的 hello 消息
+        
+        解析服务器返回的 hello 消息，设置相关参数并通知音频通道已打开
+        
+        Args:
+            data: 服务器返回的 hello 消息数据
         """
         try:
             # 验证传输方式
@@ -202,17 +207,3 @@ class WebsocketProtocol(Protocol):
                     await self.on_audio_channel_closed()
             except Exception as e:
                 logger.error(f"关闭WebSocket连接失败: {e}")
-
-    async def disconnect(self):
-        """断开WebSocket连接"""
-        if self.websocket:
-            try:
-                await self.websocket.close()
-                self.websocket = None
-                self.connected = False
-                if self.on_audio_channel_closed:
-                    await self.on_audio_channel_closed()
-            except Exception as e:
-                logger.error(f"关闭WebSocket连接失败: {e}")
-            if self.on_connection_state_changed:
-                self.on_connection_state_changed(False)

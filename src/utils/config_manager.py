@@ -4,10 +4,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import threading
 import requests
-
-from src.utils import system_info
-from src.utils.system_info import get_local_ip
-
+import socket
+import uuid
 
 logger = logging.getLogger("ConfigManager")
 
@@ -35,7 +33,31 @@ class ConfigManager:
             "WEBSOCKET_URL": "wss://api.tenclass.net/xiaozhi/v1/",
             "WEBSOCKET_ACCESS_TOKEN": "test-token",
         },
-        "MQTT_INFO": None
+        "MQTT_INFO": None,
+        "USE_WAKE_WORD": True,
+        "WAKE_WORDS": [
+            "小云",
+            "你好小云"
+        ],
+        "WAKE_WORD_MODEL_PATH": "./models/vosk-model-small-cn-0.22",
+        # 视觉识别相关配置
+        "VISION": {
+            "ENABLED": True,                    # 是否启用视觉功能
+            "API_KEY": "你的API_KEY",                       # 视觉API密钥
+            "API_URL": "https://open.bigmodel.cn/api/paas/v4/chat/completions", # API基础URL
+            "MODEL": "glm-4v-flash",             # 使用的模型名称
+            "CAMERA_INDEX": 0,                   # 摄像头索引
+            "KEYWORDS": [                        # 触发视觉识别的关键词列表
+                "拍照", "识别场景", "识别物体", 
+                "导航", "识别", "识别画面", 
+                "看看", "帮我看看", "帮我分析"
+            ],
+            "CAMERA_KEYWORDS": [                 # 控制摄像头的关键词
+                {"action": "open", "keywords": ["打开摄像头", "开摄像头", "开启摄像头"]},
+                {"action": "close", "keywords": ["关闭摄像头", "关摄像头", "停止摄像头"]}
+            ],
+            "DEFAULT_PROMPT": "图中描绘的是什么景象,请详细描述，因为用户可能是盲人" # 默认提示语
+        }
     }
 
     def __new__(cls):
@@ -145,10 +167,33 @@ class ConfigManager:
                 cls._instance = cls()
         return cls._instance
 
+    def get_mac_address(self):
+        mac = uuid.UUID(int=uuid.getnode()).hex[-12:]
+
+        return ":".join([mac[i:i + 2] for i in range(0, 12, 2)])
+
+    def generate_uuid(self) -> str:
+        """
+        生成 UUID v4
+        """
+        # 方法1：使用 Python 的 uuid 模块
+        return str(uuid.uuid4())
+
+    def get_local_ip(self):
+        try:
+            # 创建一个临时 socket 连接来获取本机 IP
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(('8.8.8.8', 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return '127.0.0.1'
+
     def _initialize_client_id(self):
         """确保存在客户端ID"""
         if not self._config["CLIENT_ID"]:
-            client_id = system_info.generate_uuid()
+            client_id = self.generate_uuid()
             success = self.update_config("CLIENT_ID", client_id)
             if success:
                 logger.info(f"Generated new CLIENT_ID: {client_id}")
@@ -159,7 +204,7 @@ class ConfigManager:
         """确保存在设备ID"""
         if not self._config["DEVICE_ID"]:
             try:
-                device_hash = system_info.get_mac_address()
+                device_hash = self.get_mac_address()
                 success = self.update_config("DEVICE_ID", device_hash)
                 if success:
                     logger.info(f"Generated new DEVICE_ID: {device_hash}")
@@ -169,19 +214,30 @@ class ConfigManager:
                 logger.error(f"Error generating DEVICE_ID: {e}")
 
     def _initialize_mqtt_info(self):
-        """初始化MQTT信息"""
-        if not self.get_config("MQTT_INFO"):
-            try:
-                mqtt_info = self._get_ota_version()
-                if mqtt_info:
-                    self.update_config("MQTT_INFO", mqtt_info)
-                    self.logger.info("MQTT信息已成功更新")
-                    return mqtt_info
-                else:
-                    self.logger.error("无法获取MQTT信息")
-            except Exception as e:
-                self.logger.error(f"初始化MQTT信息失败: {e}")
-        return self.get_config("MQTT_INFO")
+        """
+        初始化MQTT信息
+        每次启动都重新获取最新的MQTT配置信息
+        
+        Returns:
+            dict: MQTT配置信息，获取失败则返回已保存的配置
+        """
+        try:
+            # 尝试获取新的MQTT信息
+            mqtt_info = self._get_ota_version()
+            if mqtt_info:
+                # 更新配置
+                self.update_config("MQTT_INFO", mqtt_info)
+                self.logger.info("MQTT信息已成功更新")
+                return mqtt_info
+            else:
+                self.logger.warning("获取MQTT信息失败，使用已保存的配置")
+                return self.get_config("MQTT_INFO")
+                
+        except Exception as e:
+            self.logger.error(f"初始化MQTT信息失败: {e}")
+            # 发生错误时返回已保存的配置
+            return self.get_config("MQTT_INFO")
+
 
     def _get_ota_version(self):
         """获取OTA服务器的MQTT信息"""
@@ -207,6 +263,8 @@ class ConfigManager:
             },
             "application": {
                 "name": "xiaozhi",
+                "version": "1.1.2",
+                "idf_version": "v5.3.2-dirty"
             },
             "partition_table": [],  # 省略分区表信息
             "ota": {
@@ -214,7 +272,7 @@ class ConfigManager:
             },
             "board": {
                 "type": "bread-compact-wifi",
-                "ip": get_local_ip(),
+                "ip": self.get_local_ip(),
                 "mac": MAC_ADDR
             }
         }
@@ -236,7 +294,6 @@ class ConfigManager:
             
             # 解析JSON数据
             response_data = response.json()
-            
             # 调试信息：打印完整的OTA响应
             self.logger.debug(f"OTA服务器返回数据: {json.dumps(response_data, indent=4, ensure_ascii=False)}")
             
