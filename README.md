@@ -188,12 +188,3 @@ IDLE → CONNECTING → LISTENING → SPEAKING → IDLE
 
 [孙卫公](https://space.bilibili.com/416954647)
 
-
-## Star History
-<a href="https://star-history.com/#Huang-junsen/py-xiaozhi&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Huang-junsen/py-xiaozhi&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Huang-junsen/py-xiaozhi&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Huang-junsen/py-xiaozhi&type=Date" />
- </picture>
-</a>
