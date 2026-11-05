@@ -77,7 +77,7 @@ class ImageAnalyzer:
         try:
             logger.info(f"发送请求到: {self.base_url}")
             logger.info(f"使用模型: {self.model}")
-            response = requests.post(self.base_url, headers=self.headers, json=payload, stream=True)
+            response = requests.post(self.base_url, headers=self.headers, json=payload, stream=True, timeout=60)
             response.raise_for_status()
             
             message = ""
